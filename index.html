@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Daily Market Audio Report</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #f2f2ee; padding: 30px; color: #111; min-height: 100vh; }
+.card { background: #fff; border-radius: 14px; border: 1px solid #ddd; max-width: 720px; margin: 0 auto; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,.07); }
+.hdr { background: #f8f8f4; border-bottom: 1px solid #e8e8e0; padding: 14px 22px; display: flex; justify-content: space-between; align-items: center; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #3d9e75; display: inline-block; margin-right: 7px; animation: blink 2s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+.hdr-title { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: #666; font-family: monospace; }
+.hdr-date { font-size: 11px; color: #999; font-family: monospace; }
+.body { padding: 22px; }
+.api-row { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; }
+.api-label { font-family: monospace; font-size: 11px; color: #888; white-space: nowrap; }
+.api-input { flex: 1; padding: 9px 12px; font-family: monospace; font-size: 12px; border: 1px solid #ccc; border-radius: 8px; background: #fff; color: #222; }
+.api-input:focus { outline: none; border-color: #888; }
+.fetch-btn { display: block; width: 100%; padding: 13px; background: #f8f8f4; border: 1px solid #ccc; border-radius: 9px; font-family: monospace; font-size: 13px; font-weight: 600; color: #222; cursor: pointer; text-align: center; margin-bottom: 14px; }
+.fetch-btn:hover { background: #efefea; }
+.fetch-btn:disabled { opacity: .45; cursor: not-allowed; }
+.progress-detail { font-size: 11px; font-family: monospace; color: #aaa; margin-bottom: 8px; min-height: 16px; }
+.script { background: #f8f8f4; border: 1px solid #e8e8e0; border-radius: 9px; padding: 18px; font-size: 13px; line-height: 1.9; color: #222; max-height: 420px; overflow-y: auto; margin-bottom: 14px; white-space: pre-wrap; font-family: monospace; display: none; }
+.player { background: #f8f8f4; border: 1px solid #e8e8e0; border-radius: 9px; padding: 14px 16px; display: none; }
+.controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.btn { padding: 8px 16px; background: #fff; border: 1px solid #ccc; border-radius: 8px; font-family: monospace; font-size: 12px; color: #222; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: #f0f0ea; }
+.prog-wrap { flex: 1; min-width: 80px; height: 4px; background: #ddd; border-radius: 2px; }
+.prog-bar { height: 100%; background: #555; width: 0%; border-radius: 2px; transition: width .3s; }
+select { font-family: monospace; font-size: 11px; padding: 6px 8px; border: 1px solid #ccc; border-radius: 8px; background: #fff; color: #222; cursor: pointer; }
+.status { font-family: monospace; font-size: 11px; color: #888; min-height: 16px; margin-top: 4px; }
+.counter { font-family: monospace; font-size: 11px; color: #bbb; min-width: 44px; }
+.note { font-size: 11px; font-family: monospace; color: #aaa; margin-top: 12px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="hdr">
+    <span class="hdr-title"><span class="dot"></span>Daily Market Audio Report</span>
+    <span class="hdr-date" id="dateLabel"></span>
+  </div>
+  <div class="body">
+    <div class="api-row">
+      <span class="api-label">Finnhub API key:</span>
+      <input class="api-input" type="text" id="apiKey" placeholder="Paste your free key from finnhub.io" />
+    </div>
+    <button class="fetch-btn" id="fetchBtn" onclick="buildReport()">Fetch live data &amp; generate report</button>
+    <div class="progress-detail" id="progressDetail"></div>
+    <div class="script" id="scriptBox"></div>
+    <div class="player" id="playerBox">
+      <div class="controls">
+        <button class="btn" id="playBtn" onclick="togglePlay()">&#9654; Play</button>
+        <button class="btn" onclick="stopAudio()">&#9632; Stop</button>
+        <div class="prog-wrap"><div class="prog-bar" id="progBar"></div></div>
+        <span class="counter" id="counter"></span>
+        <select id="voiceSel"></select>
+        <select id="speedSel">
+          <option value=".8">0.8x</option>
+          <option value=".9">0.9x</option>
+          <option value="1" selected>1x</option>
+          <option value="1.1">1.1x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+        </select>
+      </div>
+      <div class="status" id="statusLine">Ready — press Play.</div>
+    </div>
+    <p class="note">Get a free API key at finnhub.io — no credit card required. Your key is saved in your browser automatically.</p>
+    <p class="note">VXNR and MOVE Index are not available on free data feeds and will be flagged in the report.</p>
+  </div>
+</div>
+
+<script>
+const INSTRUMENTS = [
+  { label: 'S&P 500',            symbol: 'INDEX:SPX',       type: 'quote', digits: 2 },
+  { label: 'Nasdaq',             symbol: 'INDEX:NDX',       type: 'quote', digits: 2 },
+  { label: 'Russell 2000',       symbol: 'INDEX:RUT',       type: 'quote', digits: 2 },
+  { label: 'VIX',                symbol: 'INDEX:VIX',       type: 'quote', digits: 2 },
+  { label: 'RVX',                symbol: null,              type: 'unavailable' },
+  { label: 'VXNR',               symbol: null,              type: 'unavailable' },
+  { label: 'MOVE Index',         symbol: null,              type: 'unavailable' },
+  { label: 'EUR/USD',            symbol: 'OANDA:EUR_USD',   type: 'quote', digits: 4 },
+  { label: 'GBP/USD',            symbol: 'OANDA:GBP_USD',   type: 'quote', digits: 4 },
+  { label: 'USD/JPY',            symbol: 'OANDA:USD_JPY',   type: 'quote', digits: 2 },
+  { label: 'USD/CAD',            symbol: 'OANDA:USD_CAD',   type: 'quote', digits: 4 },
+  { label: 'Gold',               symbol: 'OANDA:XAU_USD',   type: 'quote', digits: 2 },
+  { label: 'Silver',             symbol: 'OANDA:XAG_USD',   type: 'quote', digits: 3 },
+  { label: 'Copper',             symbol: 'OANDA:XCU_USD',   type: 'quote', digits: 3 },
+  { label: 'WTI Crude',          symbol: 'OANDA:WTICO_USD', type: 'quote', digits: 2 },
+  { label: 'Brent Crude',        symbol: 'OANDA:BCO_USD',   type: 'quote', digits: 2 },
+  { label: 'Natural Gas',        symbol: 'OANDA:NATGAS_USD',type: 'quote', digits: 3 },
+  { label: 'Wheat',              symbol: 'OANDA:WHEAT_USD', type: 'quote', digits: 2 },
+  { label: 'Soybeans',           symbol: 'OANDA:SOYBN_USD', type: 'quote', digits: 2 },
+  { label: 'FTSE 100',           symbol: 'INDEX:UKX',       type: 'quote', digits: 2 },
+  { label: 'DAX',                symbol: 'INDEX:DAX',       type: 'quote', digits: 2 },
+  { label: 'CAC 40',             symbol: 'INDEX:CAC',       type: 'quote', digits: 2 },
+  { label: 'Nikkei 225',         symbol: 'INDEX:NKY',       type: 'quote', digits: 2 },
+  { label: 'Hang Seng',          symbol: 'INDEX:HSI',       type: 'quote', digits: 2 },
+  { label: 'Shanghai Composite', symbol: 'INDEX:SHCOMP',    type: 'quote', digits: 2 },
+  { label: 'Sensex',             symbol: 'INDEX:SENSEX',    type: 'quote', digits: 2 },
+  { label: 'KOSPI',              symbol: 'INDEX:KOSPI',     type: 'quote', digits: 2 },
+  { label: 'BIST 100',           symbol: 'INDEX:XU100',     type: 'quote', digits: 2 },
+  { label: 'IDX Composite',      symbol: 'INDEX:JCI',       type: 'quote', digits: 2 },
+  { label: 'TSX',                symbol: 'INDEX:SPTSX',     type: 'quote', digits: 2 },
+  { label: 'IPC Mexico',         symbol: 'INDEX:MEXBOL',    type: 'quote', digits: 2 },
+  { label: 'Bovespa',            symbol: 'INDEX:IBOV',      type: 'quote', digits: 2 },
+];
+
+const now = new Date();
+document.getElementById('dateLabel').textContent = now.toLocaleDateString('en-US', {
+  weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+});
+
+const savedKey = localStorage.getItem('finnhub_api_key');
+if (savedKey) document.getElementById('apiKey').value = savedKey;
+
+let chunks = [], voices = [], currentChunk = 0, isPlaying = false, isPaused = false, pausedAt = 0;
+const voiceSel = document.getElementById('voiceSel');
+
+function loadVoices() {
+  voices = speechSynthesis.getVoices().filter(v => v.lang.startsWith('en'));
+  voiceSel.innerHTML = '';
+  voices.forEach((v, i) => {
+    const o = document.createElement('option');
+    o.value = i;
+    o.textContent = v.name.length > 28 ? v.name.slice(0, 28) + '...' : v.name;
+    if (/samantha|daniel|google us english|karen/i.test(v.name)) o.selected = true;
+    voiceSel.appendChild(o);
+  });
+  if (!voiceSel.options.length) voiceSel.innerHTML = '<option>Default</option>';
+}
+loadVoices();
+if (speechSynthesis.onvoiceschanged !== undefined) speechSynthesis.onvoiceschanged = loadVoices;
+
+function fmt(val, digits) {
+  if (val == null || isNaN(val) || val === 0) return 'N/A';
+  return Number(val).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+function makeLine(label, current, prev, digits) {
+  if (!current || current === 0) return label + '. Data unavailable.';
+  const price = fmt(current, digits);
+  const chg = current - prev;
+  const pchg = prev !== 0 ? (chg / prev) * 100 : 0;
+  const dir = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+  const sign = chg >= 0 ? 'positive' : 'negative';
+  const abs = fmt(Math.abs(chg), digits);
+  const absp = fmt(Math.abs(pchg), 2);
+  const prevStr = prev && prev !== 0 ? '. Previous close ' + fmt(prev, digits) : '';
+  return label + '. ' + price + prevStr + '. ' + dir + ' ' + abs + ', ' + sign + ' ' + absp + ' percent.';
+}
+
+async function fetchQuote(symbol, apiKey) {
+  const url = 'https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(symbol) + '&token=' + apiKey;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return await res.json();
+}
+
+async function buildReport() {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) { setDetail('Please enter your Finnhub API key above.'); return; }
+  localStorage.setItem('finnhub_api_key', apiKey);
+
+  const btn = document.getElementById('fetchBtn');
+  btn.disabled = true;
+  btn.textContent = 'Fetching live data...';
+  setDetail('Starting...');
+
+  try {
+    const results = {};
+    const toFetch = INSTRUMENTS.filter(i => i.type !== 'unavailable' && i.symbol);
+
+    for (let idx = 0; idx < toFetch.length; idx++) {
+      const inst = toFetch[idx];
+      setDetail('Fetching ' + inst.label + ' (' + (idx + 1) + ' of ' + toFetch.length + ')...');
+      try {
+        const data = await fetchQuote(inst.symbol, apiKey);
+        results[inst.label] = data;
+      } catch(e) {
+        results[inst.label] = null;
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    function line(inst) {
+      if (inst.type === 'unavailable') return inst.label + '. Not available on free data feeds.';
+      const data = results[inst.label];
+      if (!data || !data.c) return inst.label + '. Data unavailable.';
+      return makeLine(inst.label, data.c, data.pc, inst.digits);
+    }
+
+    const dateStr = now.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+    const get = label => INSTRUMENTS.find(i => i.label === label);
+    const sc = [];
+
+    sc.push(dateStr + '. Global Market Report.');
+    sc.push('U.S. EQUITIES.');
+    sc.push(line(get('S&P 500')));
+    sc.push(line(get('Nasdaq')));
+    sc.push(line(get('Russell 2000')));
+    sc.push('VOLATILITY.');
+    sc.push(line(get('VIX')));
+    sc.push(line(get('VXNR')));
+    sc.push(line(get('RVX')));
+    sc.push(line(get('MOVE Index')));
+    sc.push('FOREX.');
+    sc.push(line(get('EUR/USD')));
+    sc.push(line(get('GBP/USD')));
+    sc.push(line(get('USD/JPY')));
+    sc.push(line(get('USD/CAD')));
+    sc.push('COMMODITIES.');
+    sc.push(line(get('Gold')));
+    sc.push(line(get('Silver')));
+    sc.push(line(get('Copper')));
+    sc.push(line(get('WTI Crude')));
+    sc.push(line(get('Brent Crude')));
+    sc.push(line(get('Natural Gas')));
+    sc.push(line(get('Wheat')));
+    sc.push(line(get('Soybeans')));
+    sc.push('EUROPE.');
+    sc.push(line(get('FTSE 100')));
+    sc.push(line(get('DAX')));
+    sc.push(line(get('CAC 40')));
+    sc.push('ASIA-PACIFIC AND EMERGING MARKETS.');
+    sc.push(line(get('Nikkei 225')));
+    sc.push(line(get('Hang Seng')));
+    sc.push(line(get('Shanghai Composite')));
+    sc.push(line(get('Sensex')));
+    sc.push(line(get('KOSPI')));
+    sc.push(line(get('BIST 100')));
+    sc.push(line(get('IDX Composite')));
+    sc.push('AMERICAS.');
+    sc.push(line(get('TSX')));
+    sc.push(line(get('IPC Mexico')));
+    sc.push(line(get('Bovespa')));
+    sc.push('End of report. ' + dateStr + '.');
+
+    chunks = sc;
+    document.getElementById('scriptBox').textContent = sc.join('\n');
+    document.getElementById('scriptBox').style.display = 'block';
+    document.getElementById('playerBox').style.display = 'block';
+    btn.textContent = 'Refresh live data';
+    btn.disabled = false;
+    setDetail('');
+    setStatus('Ready — press Play.');
+
+  } catch(e) {
+    btn.textContent = 'Retry';
+    btn.disabled = false;
+    setDetail('Error: ' + e.message);
+  }
+}
+
+function setDetail(m) { document.getElementById('progressDetail').textContent = m; }
+function setStatus(m) { document.getElementById('statusLine').textContent = m; }
+function setProgress(p) { document.getElementById('progBar').style.width = Math.min(100, p) + '%'; }
+function setCounter(a, b) { document.getElementById('counter').textContent = (a && b) ? a + '/' + b : ''; }
+function getVoice() { const i = parseInt(voiceSel.value); return (!isNaN(i) && voices[i]) ? voices[i] : null; }
+function getRate() { return parseFloat(document.getElementById('speedSel').value); }
+
+function speakChunk(i) {
+  if (i >= chunks.length) {
+    isPlaying = false;
+    document.getElementById('playBtn').textContent = 'Play';
+    setProgress(100); setStatus('Complete.'); setCounter(chunks.length, chunks.length);
+    setTimeout(() => setProgress(0), 2000);
+    return;
+  }
+  currentChunk = i;
+  setCounter(i + 1, chunks.length);
+  setProgress(Math.round((i / chunks.length) * 100));
+  const u = new SpeechSynthesisUtterance(chunks[i]);
+  u.rate = getRate(); u.volume = 1;
+  const v = getVoice(); if (v) u.voice = v;
+  u.onend = () => { if (isPlaying) speakChunk(i + 1); };
+  u.onerror = (e) => { if (e.error === 'interrupted' || e.error === 'canceled') return; setStatus('Speech error: ' + e.error); };
+  speechSynthesis.speak(u);
+}
+
+function togglePlay() {
+  if (!chunks.length) { setStatus('Fetch the report first.'); return; }
+  const btn = document.getElementById('playBtn');
+  if (isPaused) {
+    isPaused = false; isPlaying = true; btn.textContent = 'Pause';
+    setStatus('Playing...'); speakChunk(pausedAt); return;
+  }
+  if (isPlaying) {
+    isPaused = true; isPlaying = false; pausedAt = currentChunk;
+    speechSynthesis.cancel(); btn.textContent = 'Resume'; setStatus('Paused.'); return;
+  }
+  speechSynthesis.cancel(); currentChunk = 0; isPlaying = true; isPaused = false;
+  btn.textContent = 'Pause'; setStatus('Playing...'); speakChunk(0);
+}
+
+function stopAudio() {
+  speechSynthesis.cancel(); isPlaying = false; isPaused = false; currentChunk = 0; pausedAt = 0;
+  document.getElementById('playBtn').textContent = 'Play';
+  setProgress(0); setCounter('', ''); setStatus('Stopped.');
+}
+</script>
+</body>
+</html>
